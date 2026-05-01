@@ -1,0 +1,9 @@
+services:
+  mock-server:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data  # 將本地 data 資料夾掛載到容器內
+    environment:
+      - SERVER_PORT=8080
