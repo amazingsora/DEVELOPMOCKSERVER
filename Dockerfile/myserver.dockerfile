@@ -1,9 +1,5 @@
-services:
-  mock-server:
-    build:
-      context: .
-      dockerfile: server.dockerfile  # 強制指定檔名
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/data
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -1,0 +1,17 @@
+{
+  "url": "/limit",
+  "method": "POST",
+  "description": "查詢 limit 資料",
+  "idField": "limit-id",
+  "queryFields": [
+    "external-root-reference",
+    "root-limit-reference",
+    "limit-on-reference",
+    "committed-or-uncommitted",
+    "account-type"
+  ],
+  "adminUI": {
+    "label": "Limit 查詢",
+    "group": "Limit"
+  }
+}

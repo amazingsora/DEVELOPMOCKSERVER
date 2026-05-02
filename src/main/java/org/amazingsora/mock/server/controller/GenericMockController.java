@@ -1,92 +1,143 @@
 package org.amazingsora.mock.server.controller;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.amazingsora.mock.server.service.MockConfigLoader;
+import org.amazingsora.mock.server.service.MockDataService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
 @RestController
-@RequestMapping("/api/mock")
-@CrossOrigin(origins = "*") 
+@CrossOrigin(origins = {"http://localhost:4200", "http://localhost:3000"})
 public class GenericMockController {
 
-    private final String DATA_DIR = "data/";
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final MockConfigLoader configLoader;
+    private final MockDataService dataService;
 
-    /**
-     * GET /api/mock/{entity}
-     * 自動判斷回傳 List 或 Map
-     */
-    @GetMapping("/{entity}")
-    public Object getData(@PathVariable String entity) throws IOException {
-        return readJsonFile(entity);
+    public GenericMockController(MockConfigLoader configLoader, MockDataService dataService) {
+        this.configLoader = configLoader;
+        this.dataService = dataService;
     }
 
     /**
-     * POST /api/mock/{entity}/update
-     * 接收 {} 並更新至檔案中
+     * 查詢 — POST /{entity}
+     * 讀 config/{entity}.json 取得 queryFields，然後過濾 data/{entity}.json
+     */
+    @PostMapping("/{entity}")
+    public ResponseEntity<Object> query(
+            @PathVariable String entity,
+            @RequestBody(required = false) Map<String, Object> req) {
+
+        if (!isValidEntity(entity)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid entity name"));
+        }
+
+        try {
+            Map<String, Object> config = configLoader.loadConfig(entity);
+            if (config == null) {
+                return ResponseEntity.notFound().build();
+            }
+
+            @SuppressWarnings("unchecked")
+            List<String> queryFields = (List<String>) config.getOrDefault("queryFields", List.of());
+
+            Object result = dataService.query(entity, req, queryFields);
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 新增 — POST /{entity}/create
+     */
+    @PostMapping("/{entity}/create")
+    public ResponseEntity<Object> create(
+            @PathVariable String entity,
+            @RequestBody Map<String, Object> payload) {
+
+        if (!isValidEntity(entity)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid entity name"));
+        }
+
+        try {
+            Map<String, Object> result = dataService.create(entity, payload);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 修改 — POST /{entity}/update
+     * config 裡的 idField 定義用哪個欄位來比對（預設用 "id"）
      */
     @PostMapping("/{entity}/update")
-    public Map<String, Object> updateData(@PathVariable String entity, @RequestBody Map<String, Object> payload) throws IOException {
-        Object existingData = readJsonFile(entity);
-        
-        if (existingData instanceof List) {
-            List<Map<String, Object>> list = (List<Map<String, Object>>) existingData;
-            updateList(list, payload);
-            writeJsonFile(entity, list);
-        } else {
-            Map<String, Object> map = (Map<String, Object>) existingData;
-            map.putAll(payload);
-            writeJsonFile(entity, map);
+    public ResponseEntity<Object> update(
+            @PathVariable String entity,
+            @RequestBody Map<String, Object> payload) {
+
+        if (!isValidEntity(entity)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid entity name"));
         }
 
-        return Map.of(
-            "status", "SUCCESS",
-            "timestamp", System.currentTimeMillis(),
-            "updatedEntity", entity
-        );
-    }
+        try {
+            Map<String, Object> config = configLoader.loadConfig(entity);
+            String idField = config != null
+                    ? (String) config.getOrDefault("idField", "id")
+                    : "id";
 
-
-    private void updateList(List<Map<String, Object>> list, Map<String, Object> payload) {
-        String idKey = "id"; 
-        Object idValue = payload.get(idKey);
-
-        if (idValue != null) {
-            boolean found = false;
-            for (Map<String, Object> item : list) {
-                if (String.valueOf(item.get(idKey)).equals(String.valueOf(idValue))) {
-                    item.putAll(payload); 
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) list.add(payload); 
-        } else {
-            list.add(payload); 
+            Map<String, Object> result = dataService.update(entity, payload, idField);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 
-    private Object readJsonFile(String entity) throws IOException {
-        File dir = new File(DATA_DIR);
-        if (!dir.exists()) dir.mkdirs();
+    // ─── 預留 Admin UI 用的 endpoint（之後串前端）────────────────────────────
 
-        File file = new File(dir, entity + ".json");
-        if (!file.exists()) return new HashMap<String, Object>();
+    /**
+     * 取得所有 config 列表 — 給未來 /admin UI 用
+     * GET /admin/configs
+     */
+    @GetMapping("/admin/configs")
+    public ResponseEntity<Object> listConfigs() {
+        java.io.File configDir = new java.io.File("config/");
+        if (!configDir.exists()) return ResponseEntity.ok(List.of());
+        String[] files = configDir.list((d, name) -> name.endsWith(".json"));
+        if (files == null) return ResponseEntity.ok(List.of());
+        List<String> names = java.util.Arrays.stream(files)
+                .map(f -> f.replace(".json", ""))
+                .toList();
+        return ResponseEntity.ok(names);
+    }
 
-        String content = new String(java.nio.file.Files.readAllBytes(file.toPath())).trim();
-        if (content.startsWith("[")) {
-            return mapper.readValue(file, new TypeReference<List<Map<String, Object>>>() {});
-        } else {
-            return mapper.readValue(file, new TypeReference<Map<String, Object>>() {});
+    /**
+     * 取得單一 config — 給未來 /admin UI 用
+     * GET /admin/configs/{entity}
+     */
+    @GetMapping("/admin/configs/{entity}")
+    public ResponseEntity<Object> getConfig(@PathVariable String entity) {
+        if (!isValidEntity(entity)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid entity name"));
+        }
+        try {
+            Map<String, Object> config = configLoader.loadConfig(entity);
+            if (config == null) return ResponseEntity.notFound().build();
+            return ResponseEntity.ok(config);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 
-    private void writeJsonFile(String entity, Object data) throws IOException {
-        File file = new File(DATA_DIR + entity + ".json");
-        mapper.writerWithDefaultPrettyPrinter().writeValue(file, data);
+    // ─── helper ──────────────────────────────────────────────────────────────
+
+    private boolean isValidEntity(String entity) {
+        return entity != null && entity.matches("^[a-zA-Z0-9_-]+$");
     }
 }
